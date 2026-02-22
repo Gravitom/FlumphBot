@@ -15,14 +15,30 @@ A Discord bot that automates D&D session scheduling by integrating with Google C
 ### Prerequisites
 
 - Python 3.10+
-- Discord bot token ([Create one here](https://discord.com/developers/applications))
+- Discord bot token (see setup below)
 - Google Calendar API credentials ([Setup guide](https://developers.google.com/calendar/api/quickstart/python))
+
+### Discord Bot Setup
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application** → name it "FlumphBot"
+3. Go to **Bot** tab:
+   - Click **Reset Token** → copy and save it
+   - Enable **Server Members Intent**
+   - Enable **Message Content Intent**
+4. Go to **OAuth2 → URL Generator**:
+   - Scopes: `bot`, `applications.commands`
+   - Bot Permissions: `Send Messages`, `Create Polls`, `Embed Links`, `Read Message History`, `Mention Everyone`, `Use External Emojis`
+5. Copy the generated URL and open it to invite the bot to your server
+6. Get your IDs (enable Developer Mode in Discord settings first):
+   - Right-click your server → **Copy Server ID** (this is `DISCORD_GUILD_ID`)
+   - Right-click your scheduling channel → **Copy Channel ID** (this is `DISCORD_CHANNEL_ID`)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/FlumphBot.git
+git clone https://github.com/Gravitom/FlumphBot.git
 cd FlumphBot
 
 # Create virtual environment
