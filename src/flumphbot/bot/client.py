@@ -54,7 +54,7 @@ class FlumphBot(commands.Bot):
                     self.config.azure_storage_connection_string or ""
                 )
             else:
-                self._storage = SQLiteStorage()
+                self._storage = SQLiteStorage(self.config.database_path)
         return self._storage
 
     @property

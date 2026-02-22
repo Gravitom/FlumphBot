@@ -44,6 +44,7 @@ class Config:
     google: GoogleConfig
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     storage_backend: str = "sqlite"
+    database_path: str = "flumphbot.db"
     azure_storage_connection_string: str | None = None
     dnd_session_keyword: str = "D&D"
 
@@ -108,6 +109,7 @@ def load_config() -> Config:
         google=google_config,
         scheduler=scheduler_config,
         storage_backend=os.environ.get("STORAGE_BACKEND", "sqlite"),
+        database_path=os.environ.get("DATABASE_PATH", "flumphbot.db"),
         azure_storage_connection_string=os.environ.get("AZURE_STORAGE_CONNECTION_STRING"),
         dnd_session_keyword=os.environ.get("DND_SESSION_KEYWORD", "D&D"),
     )
