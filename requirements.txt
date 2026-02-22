@@ -1,0 +1,11 @@
+# Core dependencies
+discord.py>=2.3.0
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+APScheduler>=3.10.0
+python-dotenv>=1.0.0
+aiosqlite>=0.19.0
+
+# Optional: Azure deployment
+# azure-data-tables>=12.4.0
+# azure-functions>=1.17.0

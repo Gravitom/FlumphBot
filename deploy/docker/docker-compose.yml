@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  flumphbot:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flumphbot
+    restart: unless-stopped
+    environment:
+      # Discord configuration
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+
+      # Google Calendar configuration
+      - GOOGLE_CREDENTIALS_JSON=${GOOGLE_CREDENTIALS_JSON}
+      - GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}
+
+      # Storage configuration
+      - STORAGE_BACKEND=sqlite
+
+      # Scheduler configuration
+      - POLL_DAY=${POLL_DAY:-Monday}
+      - POLL_TIME=${POLL_TIME:-09:00}
+      - POLL_DURATION_HOURS=${POLL_DURATION_HOURS:-48}
+      - DND_SESSION_KEYWORD=${DND_SESSION_KEYWORD:-D&D}
+      - TIMEZONE=${TIMEZONE:-America/New_York}
+
+    volumes:
+      # Persist SQLite database
+      - flumphbot_data:/data
+
+    # Optional: logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  flumphbot_data:
+    driver: local
