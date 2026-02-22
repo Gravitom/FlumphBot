@@ -83,7 +83,7 @@ pip install -e .
 | `/dnd pollnow <start_day> <days_ahead>` | Create a scheduling poll with custom date range |
 | `/dnd status` | Show upcoming sessions/vacations with quick actions |
 | `/dnd sync` | Force calendar sync and show issues |
-| `/dnd config` | View environment-based configuration |
+| `/dnd config` | View environment config and @everyone status |
 | `/vacation add` | Add vacation dates to the calendar |
 | `/keywords` | Manage detection keywords (list/add/remove) |
 
@@ -93,10 +93,28 @@ pip install -e .
 |---------|-------------|
 | `/dnd showsettings` | View current bot settings |
 | `/dnd allsettings` | Interactive settings panel with buttons |
-| `/dnd schedule <day> <hour> <duration> <timezone>` | Configure weekly auto-poll schedule |
+| `/dnd schedule` | Configure weekly auto-poll (day, hour, duration, timezone dropdowns) |
 | `/dnd everyone <on\|off>` | Toggle @everyone tagging in poll posts |
 | `/dnd reminder <hours>` | Configure session reminder DMs (0 = disabled) |
 | `/dnd pollwarn <hours> <min_votes>` | Configure poll close warnings (0 = disabled) |
+
+### Timezone Options
+
+The `/dnd schedule` command provides these timezone choices:
+
+| Timezone | Description |
+|----------|-------------|
+| `US/Eastern` | New York |
+| `US/Central` | Chicago |
+| `US/Mountain` | Denver |
+| `US/Pacific` | Los Angeles |
+| `America/Phoenix` | Arizona (no DST) |
+| `UTC` | Coordinated Universal Time |
+| `Europe/London` | UK |
+| `Europe/Paris` | France |
+| `Europe/Berlin` | Germany |
+| `Asia/Tokyo` | Japan |
+| `Australia/Sydney` | Australia |
 
 ### Settings Storage
 
