@@ -10,28 +10,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Day choices for schedule configuration
-DAY_CHOICES = [
-    discord.SelectOption(label="Monday", value="Monday"),
-    discord.SelectOption(label="Tuesday", value="Tuesday"),
-    discord.SelectOption(label="Wednesday", value="Wednesday"),
-    discord.SelectOption(label="Thursday", value="Thursday"),
-    discord.SelectOption(label="Friday", value="Friday"),
-    discord.SelectOption(label="Saturday", value="Saturday"),
-    discord.SelectOption(label="Sunday", value="Sunday"),
-]
 
-# Common timezone choices
-TIMEZONE_CHOICES = [
-    discord.SelectOption(label="Eastern (America/New_York)", value="America/New_York"),
-    discord.SelectOption(label="Central (America/Chicago)", value="America/Chicago"),
-    discord.SelectOption(label="Mountain (America/Denver)", value="America/Denver"),
-    discord.SelectOption(label="Pacific (America/Los_Angeles)", value="America/Los_Angeles"),
-    discord.SelectOption(label="UTC", value="UTC"),
-    discord.SelectOption(label="London (Europe/London)", value="Europe/London"),
-    discord.SelectOption(label="Paris (Europe/Paris)", value="Europe/Paris"),
-    discord.SelectOption(label="Tokyo (Asia/Tokyo)", value="Asia/Tokyo"),
-]
+def get_day_options(selected: str | None = None) -> list[discord.SelectOption]:
+    """Get day of week options with optional default selection."""
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    return [
+        discord.SelectOption(label=day, value=day, default=(day == selected))
+        for day in days
+    ]
+
+
+def get_timezone_options(selected: str | None = None) -> list[discord.SelectOption]:
+    """Get timezone options (15 most common) with optional default selection."""
+    timezones = [
+        ("US/Eastern", "US/Eastern (New York)"),
+        ("US/Central", "US/Central (Chicago)"),
+        ("US/Mountain", "US/Mountain (Denver)"),
+        ("US/Pacific", "US/Pacific (Los Angeles)"),
+        ("America/New_York", "America/New_York"),
+        ("America/Chicago", "America/Chicago"),
+        ("America/Denver", "America/Denver"),
+        ("America/Los_Angeles", "America/Los_Angeles"),
+        ("America/Phoenix", "America/Phoenix (Arizona)"),
+        ("UTC", "UTC"),
+        ("Europe/London", "Europe/London"),
+        ("Europe/Paris", "Europe/Paris"),
+        ("Europe/Berlin", "Europe/Berlin"),
+        ("Asia/Tokyo", "Asia/Tokyo"),
+        ("Australia/Sydney", "Australia/Sydney"),
+    ]
+    return [
+        discord.SelectOption(label=label, value=value, default=(value == selected))
+        for value, label in timezones
+    ]
 
 
 class ScheduleModal(discord.ui.Modal, title="Edit Poll Schedule"):
@@ -93,6 +104,13 @@ class ScheduleModal(discord.ui.Modal, title="Edit Poll Schedule"):
             await interaction.response.send_message(
                 "Invalid input. Please enter valid numbers.", ephemeral=True
             )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Handle modal errors."""
+        logger.exception("Error in ScheduleModal")
+        await interaction.response.send_message(
+            f"An error occurred: {error}", ephemeral=True
+        )
 
 
 class ReminderModal(discord.ui.Modal, title="Edit Reminder Settings"):
@@ -179,6 +197,13 @@ class ReminderModal(discord.ui.Modal, title="Edit Reminder Settings"):
                 "Invalid input. Please enter valid numbers.", ephemeral=True
             )
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Handle modal errors."""
+        logger.exception("Error in ReminderModal")
+        await interaction.response.send_message(
+            f"An error occurred: {error}", ephemeral=True
+        )
+
 
 class ScheduleSelectView(discord.ui.View):
     """View with dropdowns for selecting schedule day and timezone."""
@@ -189,35 +214,31 @@ class ScheduleSelectView(discord.ui.View):
         self.selected_day = current_day
         self.selected_timezone = current_timezone
 
-        # Set default values in selects
-        for option in self.day_select.options:
-            option.default = option.value == current_day
+        # Add selects with fresh options (not shared)
+        day_select = discord.ui.Select(
+            placeholder="Select day of week",
+            options=get_day_options(current_day),
+            row=0,
+        )
+        day_select.callback = self.day_select_callback
+        self.add_item(day_select)
 
-        for option in self.timezone_select.options:
-            option.default = option.value == current_timezone
+        tz_select = discord.ui.Select(
+            placeholder="Select timezone",
+            options=get_timezone_options(current_timezone),
+            row=1,
+        )
+        tz_select.callback = self.timezone_select_callback
+        self.add_item(tz_select)
 
-    @discord.ui.select(
-        placeholder="Select day of week",
-        options=DAY_CHOICES,
-        row=0,
-    )
-    async def day_select(
-        self, interaction: discord.Interaction, select: discord.ui.Select
-    ) -> None:
+    async def day_select_callback(self, interaction: discord.Interaction) -> None:
         """Handle day selection."""
-        self.selected_day = select.values[0]
+        self.selected_day = interaction.data["values"][0]
         await interaction.response.defer()
 
-    @discord.ui.select(
-        placeholder="Select timezone",
-        options=TIMEZONE_CHOICES,
-        row=1,
-    )
-    async def timezone_select(
-        self, interaction: discord.Interaction, select: discord.ui.Select
-    ) -> None:
+    async def timezone_select_callback(self, interaction: discord.Interaction) -> None:
         """Handle timezone selection."""
-        self.selected_timezone = select.values[0]
+        self.selected_timezone = interaction.data["values"][0]
         await interaction.response.defer()
 
     @discord.ui.button(label="Save", style=discord.ButtonStyle.green, row=2)
@@ -225,17 +246,21 @@ class ScheduleSelectView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Save the selected values."""
-        await self.bot.storage.set_setting("schedule_day", self.selected_day)
-        await self.bot.storage.set_setting("schedule_timezone", self.selected_timezone)
+        try:
+            await self.bot.storage.set_setting("schedule_day", self.selected_day)
+            await self.bot.storage.set_setting("schedule_timezone", self.selected_timezone)
 
-        # Reload scheduler
-        await self.bot.reload_scheduler()
+            # Reload scheduler
+            await self.bot.reload_scheduler()
 
-        await interaction.response.send_message(
-            f"Saved: Day={self.selected_day}, Timezone={self.selected_timezone}",
-            ephemeral=True,
-        )
-        self.stop()
+            await interaction.response.send_message(
+                f"Saved: Day={self.selected_day}, Timezone={self.selected_timezone}",
+                ephemeral=True,
+            )
+            self.stop()
+        except Exception as e:
+            logger.exception("Error saving schedule")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey, row=2)
     async def cancel_button(
@@ -292,7 +317,7 @@ class PollNowModal(discord.ui.Modal, title="Create Poll Now"):
                 )
                 return
 
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
 
             # Check for existing active poll
             active_poll = await self.bot.poll_manager.get_active_poll()
@@ -322,7 +347,7 @@ class PollNowModal(discord.ui.Modal, title="Create Poll Now"):
 
             if not available:
                 await interaction.followup.send(
-                    f"No available dates found in the specified range.",
+                    "No available dates found in the specified range.",
                     ephemeral=True,
                 )
                 return
@@ -353,6 +378,16 @@ class PollNowModal(discord.ui.Modal, title="Create Poll Now"):
             await interaction.response.send_message(
                 "Invalid input. Please enter valid numbers.", ephemeral=True
             )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Handle modal errors."""
+        logger.exception("Error in PollNowModal")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"An error occurred: {error}", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(f"An error occurred: {error}", ephemeral=True)
 
 
 class SettingsView(discord.ui.View):
@@ -391,73 +426,93 @@ class SettingsView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Open schedule configuration."""
-        settings = await self._get_settings()
-        view = ScheduleSelectView(
-            self.bot,
-            settings["schedule_day"],
-            settings["schedule_timezone"],
-        )
-        await interaction.response.send_message(
-            "Select schedule day and timezone:",
-            view=view,
-            ephemeral=True,
-        )
+        try:
+            settings = await self._get_settings()
+            view = ScheduleSelectView(
+                self.bot,
+                settings["schedule_day"],
+                settings["schedule_timezone"],
+            )
+            await interaction.response.send_message(
+                "Select schedule day and timezone:",
+                view=view,
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.exception("Error in edit_schedule_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Edit Time/Duration", style=discord.ButtonStyle.primary, row=0)
     async def edit_time_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Open time/duration modal."""
-        settings = await self._get_settings()
-        modal = ScheduleModal(
-            self.bot,
-            settings["schedule_hour"],
-            settings["poll_duration_days"],
-        )
-        await interaction.response.send_modal(modal)
+        try:
+            settings = await self._get_settings()
+            modal = ScheduleModal(
+                self.bot,
+                settings["schedule_hour"],
+                settings["poll_duration_days"],
+            )
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            logger.exception("Error in edit_time_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Toggle @everyone", style=discord.ButtonStyle.secondary, row=1)
     async def toggle_everyone_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Toggle @everyone setting."""
-        current = await self.bot.storage.get_setting("tag_everyone")
-        new_value = "false" if current == "true" else "true"
-        await self.bot.storage.set_setting("tag_everyone", new_value)
+        try:
+            current = await self.bot.storage.get_setting("tag_everyone")
+            new_value = "false" if current == "true" else "true"
+            await self.bot.storage.set_setting("tag_everyone", new_value)
 
-        status = "ON" if new_value == "true" else "OFF"
-        await interaction.response.send_message(
-            f"@everyone tagging is now **{status}**",
-            ephemeral=True,
-        )
+            status = "ON" if new_value == "true" else "OFF"
+            await interaction.response.send_message(
+                f"@everyone tagging is now **{status}**",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.exception("Error in toggle_everyone_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Edit Reminders", style=discord.ButtonStyle.secondary, row=1)
     async def edit_reminders_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Open reminders modal."""
-        settings = await self._get_settings()
-        modal = ReminderModal(
-            self.bot,
-            settings["reminder_hours"],
-            settings["pollwarn_hours"],
-            settings["pollwarn_min_votes"],
-        )
-        await interaction.response.send_modal(modal)
+        try:
+            settings = await self._get_settings()
+            modal = ReminderModal(
+                self.bot,
+                settings["reminder_hours"],
+                settings["pollwarn_hours"],
+                settings["pollwarn_min_votes"],
+            )
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            logger.exception("Error in edit_reminders_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Create Poll Now", style=discord.ButtonStyle.success, row=2)
     async def create_poll_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Open poll creation modal."""
-        if not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message(
-                "Please use this in a text channel.", ephemeral=True
-            )
-            return
+        try:
+            if not isinstance(interaction.channel, discord.TextChannel):
+                await interaction.response.send_message(
+                    "Please use this in a text channel.", ephemeral=True
+                )
+                return
 
-        modal = PollNowModal(self.bot, interaction.channel)
-        await interaction.response.send_modal(modal)
+            modal = PollNowModal(self.bot, interaction.channel)
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            logger.exception("Error in create_poll_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
 
 class StatusView(discord.ui.View):
@@ -472,11 +527,15 @@ class StatusView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         """Open poll creation modal."""
-        if not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message(
-                "Please use this in a text channel.", ephemeral=True
-            )
-            return
+        try:
+            if not isinstance(interaction.channel, discord.TextChannel):
+                await interaction.response.send_message(
+                    "Please use this in a text channel.", ephemeral=True
+                )
+                return
 
-        modal = PollNowModal(self.bot, interaction.channel)
-        await interaction.response.send_modal(modal)
+            modal = PollNowModal(self.bot, interaction.channel)
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            logger.exception("Error in create_poll_button")
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)

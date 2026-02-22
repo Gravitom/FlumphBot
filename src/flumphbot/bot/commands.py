@@ -34,6 +34,25 @@ ON_OFF_CHOICES = [
     app_commands.Choice(name="off", value="off"),
 ]
 
+# Timezone choices (15 most common, in order)
+TIMEZONE_CHOICES = [
+    app_commands.Choice(name="US/Eastern (New York)", value="US/Eastern"),
+    app_commands.Choice(name="US/Central (Chicago)", value="US/Central"),
+    app_commands.Choice(name="US/Mountain (Denver)", value="US/Mountain"),
+    app_commands.Choice(name="US/Pacific (Los Angeles)", value="US/Pacific"),
+    app_commands.Choice(name="America/New_York", value="America/New_York"),
+    app_commands.Choice(name="America/Chicago", value="America/Chicago"),
+    app_commands.Choice(name="America/Denver", value="America/Denver"),
+    app_commands.Choice(name="America/Los_Angeles", value="America/Los_Angeles"),
+    app_commands.Choice(name="America/Phoenix (Arizona)", value="America/Phoenix"),
+    app_commands.Choice(name="UTC", value="UTC"),
+    app_commands.Choice(name="Europe/London", value="Europe/London"),
+    app_commands.Choice(name="Europe/Paris", value="Europe/Paris"),
+    app_commands.Choice(name="Europe/Berlin", value="Europe/Berlin"),
+    app_commands.Choice(name="Asia/Tokyo", value="Asia/Tokyo"),
+    app_commands.Choice(name="Australia/Sydney", value="Australia/Sydney"),
+]
+
 
 class FlumphCommands(app_commands.Group):
     """Slash commands for D&D session management."""
@@ -304,9 +323,9 @@ class FlumphCommands(app_commands.Group):
         day="Day of week for the weekly poll",
         hour="Hour in 24h format (0-23)",
         duration="Days the poll stays active (1-7)",
-        timezone="Timezone (e.g., America/New_York)",
+        timezone="Timezone for scheduling",
     )
-    @app_commands.choices(day=DAY_CHOICES)
+    @app_commands.choices(day=DAY_CHOICES, timezone=TIMEZONE_CHOICES)
     @app_commands.checks.has_permissions(manage_messages=True)
     async def schedule(
         self,
@@ -314,7 +333,7 @@ class FlumphCommands(app_commands.Group):
         day: app_commands.Choice[str],
         hour: app_commands.Range[int, 0, 23],
         duration: app_commands.Range[int, 1, 7],
-        timezone: str,
+        timezone: app_commands.Choice[str],
     ) -> None:
         """Configure the weekly auto-poll schedule."""
         await interaction.response.defer()
@@ -324,13 +343,13 @@ class FlumphCommands(app_commands.Group):
             await self.bot.storage.set_setting("schedule_day", day.value)
             await self.bot.storage.set_setting("schedule_hour", str(hour))
             await self.bot.storage.set_setting("poll_duration_days", str(duration))
-            await self.bot.storage.set_setting("schedule_timezone", timezone)
+            await self.bot.storage.set_setting("schedule_timezone", timezone.value)
 
             # Reload scheduler
             await self.bot.reload_scheduler()
 
             await interaction.followup.send(
-                f"Schedule updated: **{day.value}** at **{hour:02d}:00 {timezone}**, "
+                f"Schedule updated: **{day.value}** at **{hour:02d}:00 {timezone.value}**, "
                 f"poll duration **{duration} days**. Changes applied immediately."
             )
         except Exception as e:
@@ -527,6 +546,12 @@ class FlumphCommands(app_commands.Group):
     @app_commands.checks.has_permissions(administrator=True)
     async def config(self, interaction: discord.Interaction) -> None:
         """View current configuration."""
+        await interaction.response.defer()
+
+        # Get @everyone setting from storage
+        tag_everyone = await self.bot.storage.get_setting("tag_everyone")
+        everyone_status = "ON" if tag_everyone == "true" else "OFF"
+
         embed = discord.Embed(
             title="FlumphBot Configuration",
             color=discord.Color.blue(),
@@ -553,6 +578,11 @@ class FlumphCommands(app_commands.Group):
             inline=True,
         )
         embed.add_field(
+            name="@everyone",
+            value=everyone_status,
+            inline=True,
+        )
+        embed.add_field(
             name="D&D Keyword",
             value=self.bot.config.dnd_session_keyword,
             inline=True,
@@ -563,7 +593,7 @@ class FlumphCommands(app_commands.Group):
             inline=True,
         )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 class VacationCommands(app_commands.Group):
