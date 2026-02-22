@@ -98,3 +98,7 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
+*.json
+
+# Local deployment notes
+DEPLOY.local.md
