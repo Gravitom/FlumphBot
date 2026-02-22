@@ -1,5 +1,6 @@
 """SQLite storage backend for local development and self-hosted deployments."""
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -70,6 +71,11 @@ class SQLiteStorage(StorageBackend):
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS keywords (
+                category TEXT PRIMARY KEY,
+                keywords TEXT NOT NULL
             );
         """
         )
@@ -282,3 +288,24 @@ class SQLiteStorage(StorageBackend):
             ),
             created_event_id=row["created_event_id"],
         )
+
+    # Keywords
+    async def get_keywords(self, category: str) -> list[str] | None:
+        """Get keywords for a category."""
+        conn = await self._get_connection()
+        async with conn.execute(
+            "SELECT keywords FROM keywords WHERE category = ?", (category,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return json.loads(row["keywords"])
+            return None
+
+    async def set_keywords(self, category: str, keywords: list[str]) -> None:
+        """Set keywords for a category."""
+        conn = await self._get_connection()
+        await conn.execute(
+            "INSERT OR REPLACE INTO keywords (category, keywords) VALUES (?, ?)",
+            (category, json.dumps(keywords)),
+        )
+        await conn.commit()

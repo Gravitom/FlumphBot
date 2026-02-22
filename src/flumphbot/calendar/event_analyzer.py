@@ -4,10 +4,20 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 
 from flumphbot.calendar.models import AvailabilitySlot, CalendarEvent, EventStatus
 
 logger = logging.getLogger(__name__)
+
+
+class EventCategory(Enum):
+    """Category of a calendar event."""
+
+    DND = "dnd"
+    AWAY = "away"
+    PERSONAL = "personal"
+    OTHER = "other"
 
 
 @dataclass
@@ -19,40 +29,61 @@ class AnalysisResult:
     is_personal: bool
     is_dnd_session: bool
     matched_keywords: list[str]
+    category: EventCategory = EventCategory.OTHER
 
 
 class EventAnalyzer:
     """Analyzes calendar events for hygiene and personal content detection."""
 
+    # Default keywords for each category
+    DEFAULT_DND_KEYWORDS = [
+        "D&D",
+        "DND",
+        "Dungeons",
+        "Campaign",
+        "Session",
+    ]
+
+    DEFAULT_AWAY_KEYWORDS = [
+        "Away",
+        "Unavailable",
+        "Holiday",
+        "Vacation",
+        "Busy",
+        "PTO",
+        "Time Off",
+        "Out of Office",
+        "OOO",
+        "Trip",
+        "Travel",
+    ]
+
+    DEFAULT_PERSONAL_KEYWORDS = [
+        "birthday",
+        "doctor",
+        "dentist",
+        "appointment",
+        "interview",
+        "therapy",
+        "medical",
+    ]
+
     def __init__(
         self,
-        dnd_session_keyword: str = "D&D",
+        dnd_keywords: list[str] | None = None,
+        away_keywords: list[str] | None = None,
         personal_keywords: list[str] | None = None,
     ):
         """Initialize the event analyzer.
 
         Args:
-            dnd_session_keyword: Keyword to identify D&D session events.
-            personal_keywords: List of keywords indicating personal events.
+            dnd_keywords: Keywords to identify D&D session events.
+            away_keywords: Keywords to identify away time / vacation events.
+            personal_keywords: Keywords indicating potentially personal events.
         """
-        self.dnd_session_keyword = dnd_session_keyword
-        self.personal_keywords = personal_keywords or [
-            "doctor",
-            "dentist",
-            "appointment",
-            "interview",
-            "therapy",
-            "medical",
-            "checkup",
-            "prescription",
-            "court",
-            "lawyer",
-            "accountant",
-            "meeting",
-            "call with",
-            "date",
-            "wedding",
-        ]
+        self.dnd_keywords = dnd_keywords or self.DEFAULT_DND_KEYWORDS
+        self.away_keywords = away_keywords or self.DEFAULT_AWAY_KEYWORDS
+        self.personal_keywords = personal_keywords or self.DEFAULT_PERSONAL_KEYWORDS
 
     def is_dnd_session(self, event: CalendarEvent) -> bool:
         """Check if an event is a D&D session.
@@ -64,19 +95,42 @@ class EventAnalyzer:
             True if this appears to be a D&D session.
         """
         title = event.summary.lower()
-        keyword = self.dnd_session_keyword.lower()
+        return any(kw.lower() in title for kw in self.dnd_keywords)
 
-        # Check for various D&D patterns
-        patterns = [
-            keyword,
-            "d&d",
-            "dnd",
-            "dungeons",
-            "session",
-            "campaign",
-        ]
+    def is_away_event(self, event: CalendarEvent) -> bool:
+        """Check if an event is an away time / vacation event.
 
-        return any(pattern in title for pattern in patterns)
+        Args:
+            event: The event to check.
+
+        Returns:
+            True if this appears to be an away time event.
+        """
+        title = event.summary.lower()
+        return any(kw.lower() in title for kw in self.away_keywords)
+
+    def get_category(self, event: CalendarEvent) -> EventCategory:
+        """Determine the category of an event.
+
+        Args:
+            event: The event to categorize.
+
+        Returns:
+            The EventCategory for this event.
+        """
+        # D&D takes priority
+        if self.is_dnd_session(event):
+            return EventCategory.DND
+
+        # Check for away time
+        if self.is_away_event(event):
+            return EventCategory.AWAY
+
+        # Check for personal events
+        if self.detect_personal_keywords(event):
+            return EventCategory.PERSONAL
+
+        return EventCategory.OTHER
 
     def should_be_free(self, event: CalendarEvent) -> bool:
         """Determine if an event should be marked as Free.
@@ -89,7 +143,8 @@ class EventAnalyzer:
         Returns:
             True if the event should be marked as Free.
         """
-        # D&D sessions should remain Busy, everything else should be Free
+        # Only D&D sessions should remain Busy
+        # Away time and everything else should be Free
         return not self.is_dnd_session(event)
 
     def detect_personal_keywords(self, event: CalendarEvent) -> list[str]:
@@ -123,6 +178,7 @@ class EventAnalyzer:
         """
         is_dnd = self.is_dnd_session(event)
         matched_keywords = self.detect_personal_keywords(event)
+        category = self.get_category(event)
 
         return AnalysisResult(
             event=event,
@@ -130,6 +186,7 @@ class EventAnalyzer:
             is_personal=len(matched_keywords) > 0,
             is_dnd_session=is_dnd,
             matched_keywords=matched_keywords,
+            category=category,
         )
 
     def find_events_needing_fix(
@@ -215,6 +272,28 @@ class EventAnalyzer:
 
         return available
 
+    def find_away_events(
+        self,
+        events: list[CalendarEvent],
+    ) -> list[CalendarEvent]:
+        """Find events that are away time / vacations.
+
+        Args:
+            events: List of events to check.
+
+        Returns:
+            List of away/vacation-related events.
+        """
+        away_events = []
+        for event in events:
+            if self.is_away_event(event):
+                away_events.append(event)
+            # Also include multi-day all-day events as potential away time
+            elif event.all_day and (event.end - event.start).days > 1:
+                away_events.append(event)
+
+        return away_events
+
     def find_vacation_events(
         self,
         events: list[CalendarEvent],
@@ -222,30 +301,13 @@ class EventAnalyzer:
     ) -> list[CalendarEvent]:
         """Find events that appear to be vacations or time off.
 
+        Deprecated: Use find_away_events() instead.
+
         Args:
             events: List of events to check.
-            vacation_keywords: Keywords indicating vacation/time off.
+            vacation_keywords: Ignored, uses away_keywords from config.
 
         Returns:
             List of vacation-related events.
         """
-        if vacation_keywords is None:
-            vacation_keywords = [
-                "vacation",
-                "pto",
-                "time off",
-                "holiday",
-                "away",
-                "out of office",
-                "ooo",
-                "trip",
-                "travel",
-            ]
-
-        vacations = []
-        for event in events:
-            title = event.summary.lower()
-            if any(kw in title for kw in vacation_keywords) or event.all_day and (event.end - event.start).days > 1:
-                vacations.append(event)
-
-        return vacations
+        return self.find_away_events(events)

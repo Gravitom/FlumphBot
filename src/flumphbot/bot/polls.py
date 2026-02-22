@@ -31,6 +31,7 @@ class PollManager:
         channel: discord.TextChannel,
         available_slots: list[AvailabilitySlot],
         duration_hours: int = 48,
+        away_events: list[CalendarEvent] | None = None,
     ) -> discord.Message | None:
         """Create a scheduling poll in the given channel.
 
@@ -38,6 +39,7 @@ class PollManager:
             channel: Discord channel to post the poll in.
             available_slots: List of available date/time slots.
             duration_hours: How long the poll should run.
+            away_events: Optional list of away/vacation events to display.
 
         Returns:
             The posted message, or None if no slots available.
@@ -49,21 +51,44 @@ class PollManager:
         # Limit to max poll options
         slots_to_use = available_slots[:MAX_POLL_OPTIONS]
 
-        # Create poll options
-        poll_answers = []
+        # Build context message with away events if any
+        context_message = None
+        if away_events:
+            absence_lines = []
+            for event in away_events:
+                # Format the date range
+                if event.all_day:
+                    if (event.end - event.start).days > 1:
+                        date_str = f"{event.start.strftime('%b %d')}-{event.end.strftime('%b %d')}"
+                    else:
+                        date_str = event.start.strftime('%b %d')
+                else:
+                    date_str = event.start.strftime('%b %d')
+
+                # Get creator name from email
+                creator = event.creator_email.split("@")[0] if event.creator_email else "Unknown"
+                absence_lines.append(f"• **{event.summary}** - {date_str} ({creator})")
+
+            if absence_lines:
+                context_message = "📅 **Upcoming Absences:**\n" + "\n".join(absence_lines[:5])
+
+        # Create the poll
+        poll = discord.Poll(
+            question="When should we have our next D&D session?",
+            duration=timedelta(hours=duration_hours),
+            multiple=False,
+        )
+
+        # Add poll options
         for slot in slots_to_use:
             label = slot.display_date
             if slot.start_time:
                 label += f" ({slot.display_time})"
-            poll_answers.append(discord.PollAnswer(text=label[:55]))  # Discord limit
+            poll.add_answer(text=label[:55])  # Discord limit
 
-        # Create the poll
-        poll = discord.Poll(
-            question=discord.PollQuestion(text="When should we have our next D&D session?"),
-            answers=poll_answers,
-            duration=timedelta(hours=duration_hours),
-            multiple=False,
-        )
+        # Send context message first, then poll
+        if context_message:
+            await channel.send(context_message)
 
         # Send the poll
         message = await channel.send(poll=poll)

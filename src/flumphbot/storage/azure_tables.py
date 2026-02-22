@@ -1,6 +1,7 @@
 """Azure Table Storage backend for cloud deployments."""
 
 import contextlib
+import json
 import logging
 from datetime import datetime
 
@@ -63,7 +64,7 @@ class AzureTableStorage(StorageBackend):
         """Create tables if they don't exist."""
         service = self._get_service()
 
-        table_names = ["usermappings", "polls", "polloptions", "settings"]
+        table_names = ["usermappings", "polls", "polloptions", "settings", "keywords"]
         for table_name in table_names:
             try:
                 service.create_table(table_name)
@@ -253,3 +254,23 @@ class AzureTableStorage(StorageBackend):
             ),
             created_event_id=entity["created_event_id"] or None,
         )
+
+    # Keywords
+    async def get_keywords(self, category: str) -> list[str] | None:
+        """Get keywords for a category."""
+        table = self._get_table("keywords")
+        try:
+            entity = table.get_entity("keywords", category)
+            return json.loads(entity["keywords"])
+        except ResourceNotFoundError:
+            return None
+
+    async def set_keywords(self, category: str, keywords: list[str]) -> None:
+        """Set keywords for a category."""
+        table = self._get_table("keywords")
+        entity = {
+            "PartitionKey": "keywords",
+            "RowKey": category,
+            "keywords": json.dumps(keywords),
+        }
+        table.upsert_entity(entity)

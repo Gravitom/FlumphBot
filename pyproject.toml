@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flumphbot"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Discord bot for D&D session scheduling with Google Calendar integration"
 readme = "README.md"
 license = {text = "MIT"}

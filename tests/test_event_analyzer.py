@@ -4,14 +4,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from flumphbot.calendar.event_analyzer import EventAnalyzer
+from flumphbot.calendar.event_analyzer import EventAnalyzer, EventCategory
 from flumphbot.calendar.models import CalendarEvent, EventStatus
 
 
 @pytest.fixture
 def analyzer():
     """Create an event analyzer for testing."""
-    return EventAnalyzer(dnd_session_keyword="D&D")
+    return EventAnalyzer()
 
 
 @pytest.fixture
@@ -136,14 +136,24 @@ class TestPersonalKeywordDetection:
     def test_detects_doctor(self, analyzer):
         event = CalendarEvent(
             id="1",
-            summary="Doctor appointment",
+            summary="Doctor visit",
             start=datetime.utcnow(),
             end=datetime.utcnow() + timedelta(hours=1),
             status=EventStatus.BUSY,
         )
         keywords = analyzer.detect_personal_keywords(event)
         assert "doctor" in keywords
-        assert "appointment" in keywords
+
+    def test_detects_birthday(self, analyzer):
+        event = CalendarEvent(
+            id="1",
+            summary="Mom's birthday party",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(hours=2),
+            status=EventStatus.BUSY,
+        )
+        keywords = analyzer.detect_personal_keywords(event)
+        assert "birthday" in keywords
 
     def test_detects_in_description(self, analyzer):
         event = CalendarEvent(
@@ -217,8 +227,102 @@ class TestFindAvailableDates:
             assert slot.date.strftime("%A") == "Saturday"
 
 
+class TestFindAwayEvents:
+    """Tests for away event detection."""
+
+    def test_finds_vacation_keyword(self, analyzer, sample_events):
+        away = analyzer.find_away_events(sample_events)
+        summaries = [v.summary for v in away]
+        assert "Vacation in Hawaii" in summaries
+
+    def test_finds_multi_day_events(self, analyzer):
+        now = datetime.utcnow()
+        events = [
+            CalendarEvent(
+                id="1",
+                summary="Out of office",
+                start=now,
+                end=now + timedelta(days=5),
+                status=EventStatus.FREE,
+                all_day=True,
+            ),
+        ]
+        away = analyzer.find_away_events(events)
+        assert len(away) == 1
+
+    def test_finds_away_keyword(self, analyzer):
+        now = datetime.utcnow()
+        events = [
+            CalendarEvent(
+                id="1",
+                summary="Away for conference",
+                start=now,
+                end=now + timedelta(days=2),
+                status=EventStatus.FREE,
+            ),
+        ]
+        away = analyzer.find_away_events(events)
+        assert len(away) == 1
+
+
+class TestGetCategory:
+    """Tests for event categorization."""
+
+    def test_dnd_category(self, analyzer):
+        event = CalendarEvent(
+            id="1",
+            summary="D&D Session",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(hours=4),
+            status=EventStatus.BUSY,
+        )
+        assert analyzer.get_category(event) == EventCategory.DND
+
+    def test_away_category(self, analyzer):
+        event = CalendarEvent(
+            id="1",
+            summary="Vacation in Mexico",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(days=7),
+            status=EventStatus.FREE,
+            all_day=True,
+        )
+        assert analyzer.get_category(event) == EventCategory.AWAY
+
+    def test_personal_category(self, analyzer):
+        event = CalendarEvent(
+            id="1",
+            summary="Mom's birthday",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(hours=2),
+            status=EventStatus.BUSY,
+        )
+        assert analyzer.get_category(event) == EventCategory.PERSONAL
+
+    def test_other_category(self, analyzer):
+        event = CalendarEvent(
+            id="1",
+            summary="Team meeting",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(hours=1),
+            status=EventStatus.BUSY,
+        )
+        assert analyzer.get_category(event) == EventCategory.OTHER
+
+    def test_dnd_takes_priority_over_away(self, analyzer):
+        # If something says both "D&D Session" and "Vacation", it's D&D
+        event = CalendarEvent(
+            id="1",
+            summary="D&D Session while on vacation",
+            start=datetime.utcnow(),
+            end=datetime.utcnow() + timedelta(hours=4),
+            status=EventStatus.BUSY,
+        )
+        assert analyzer.get_category(event) == EventCategory.DND
+
+
 class TestFindVacationEvents:
-    """Tests for vacation detection."""
+    """Tests for vacation detection (deprecated, uses find_away_events)."""
 
     def test_finds_vacation_keyword(self, analyzer, sample_events):
         vacations = analyzer.find_vacation_events(sample_events)

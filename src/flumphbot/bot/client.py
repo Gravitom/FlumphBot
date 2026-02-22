@@ -69,10 +69,23 @@ class FlumphBot(commands.Bot):
         """Get the event analyzer."""
         if self._event_analyzer is None:
             self._event_analyzer = EventAnalyzer(
-                dnd_session_keyword=self.config.dnd_session_keyword,
+                dnd_keywords=self.config.dnd_keywords,
+                away_keywords=self.config.away_keywords,
                 personal_keywords=self.config.personal_keywords,
             )
         return self._event_analyzer
+
+    async def reload_event_analyzer(self) -> None:
+        """Reload the event analyzer with current keywords from storage."""
+        dnd_keywords = await self.storage.get_keywords("dnd") or self.config.dnd_keywords
+        away_keywords = await self.storage.get_keywords("away") or self.config.away_keywords
+        personal_keywords = await self.storage.get_keywords("personal") or self.config.personal_keywords
+
+        self._event_analyzer = EventAnalyzer(
+            dnd_keywords=dnd_keywords,
+            away_keywords=away_keywords,
+            personal_keywords=personal_keywords,
+        )
 
     @property
     def poll_manager(self) -> PollManager:
@@ -87,6 +100,9 @@ class FlumphBot(commands.Bot):
 
         # Initialize storage
         await self.storage.initialize()
+
+        # Load keywords from storage (or use defaults)
+        await self.reload_event_analyzer()
 
         # Set up slash commands
         setup_commands(self)

@@ -48,24 +48,44 @@ class Config:
     azure_storage_connection_string: str | None = None
     dnd_session_keyword: str = "D&D"
 
-    # Keywords that indicate potentially personal events
+    # Default keywords for D&D session detection
+    dnd_keywords: list[str] = field(
+        default_factory=lambda: [
+            "D&D",
+            "DND",
+            "Dungeons",
+            "Campaign",
+            "Session",
+        ]
+    )
+
+    # Default keywords for away time / vacation detection
+    away_keywords: list[str] = field(
+        default_factory=lambda: [
+            "Away",
+            "Unavailable",
+            "Holiday",
+            "Vacation",
+            "Busy",
+            "PTO",
+            "Time Off",
+            "Out of Office",
+            "OOO",
+            "Trip",
+            "Travel",
+        ]
+    )
+
+    # Keywords that indicate potentially personal events (accidental additions)
     personal_keywords: list[str] = field(
         default_factory=lambda: [
+            "birthday",
             "doctor",
             "dentist",
             "appointment",
             "interview",
             "therapy",
             "medical",
-            "checkup",
-            "prescription",
-            "court",
-            "lawyer",
-            "accountant",
-            "meeting",
-            "call with",
-            "date",
-            "wedding",
         ]
     )
 

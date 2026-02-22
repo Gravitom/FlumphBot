@@ -113,3 +113,26 @@ class StorageBackend(ABC):
     async def set_setting(self, key: str, value: str) -> None:
         """Set a setting value."""
         pass
+
+    # Keywords
+    @abstractmethod
+    async def get_keywords(self, category: str) -> list[str] | None:
+        """Get keywords for a category.
+
+        Args:
+            category: The keyword category ('dnd', 'away', 'personal').
+
+        Returns:
+            List of keywords, or None if not customized (use defaults).
+        """
+        pass
+
+    @abstractmethod
+    async def set_keywords(self, category: str, keywords: list[str]) -> None:
+        """Set keywords for a category.
+
+        Args:
+            category: The keyword category ('dnd', 'away', 'personal').
+            keywords: List of keywords to set.
+        """
+        pass

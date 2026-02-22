@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from flumphbot.bot.polls import VacationConfirmationView
+from flumphbot.calendar.event_analyzer import EventCategory
 from flumphbot.calendar.models import EventStatus
 
 if TYPE_CHECKING:
@@ -59,6 +60,9 @@ class ScheduledTasks:
                 )
                 return
 
+            # Get away events to display in poll context
+            away_events = self.bot.event_analyzer.find_away_events(events)
+
             # Get the notification channel
             channel = self.bot.get_channel(self.bot.config.discord.channel_id)
             if not channel:
@@ -72,6 +76,7 @@ class ScheduledTasks:
                     channel,
                     available,
                     duration_hours=self.bot.config.scheduler.poll_duration_hours,
+                    away_events=away_events,
                 )
                 logger.info("Weekly poll created successfully")
 
@@ -84,7 +89,7 @@ class ScheduledTasks:
         This task runs every 15-30 minutes to:
         1. Find events incorrectly marked as Busy
         2. Fix them to be Free
-        3. Post notifications about fixes
+        3. Post notifications about fixes (especially for Away Time events)
         4. Detect personal events and alert users
         """
         logger.info("Running calendar hygiene sync")
@@ -102,11 +107,30 @@ class ScheduledTasks:
                         event.id, EventStatus.FREE
                     )
 
-                    # Notify
-                    await self.bot.send_notification(
-                        f"Fixed '{event.summary}' to 'Free' status "
-                        f"(was incorrectly marked as 'Busy')"
-                    )
+                    # Determine event category for notification
+                    category = self.bot.event_analyzer.get_category(event)
+
+                    if category == EventCategory.AWAY:
+                        # Special notification for Away Time events
+                        creator_name = event.creator_email or "Someone"
+                        if event.creator_email:
+                            mapping = await self._find_user_by_email(event.creator_email)
+                            if mapping:
+                                creator_name = mapping.discord_name
+
+                        await self.bot.send_notification(
+                            f"**{creator_name}** - You created an Away Time item "
+                            f"(\"{event.summary}\") in the shared D&D calendar that was "
+                            f"set to Busy. I automatically changed it to Free to not "
+                            f"interfere with shared free/busy schedules."
+                        )
+                    else:
+                        # Generic fix notification
+                        await self.bot.send_notification(
+                            f"Fixed '{event.summary}' to 'Free' status "
+                            f"(was incorrectly marked as 'Busy')"
+                        )
+
                     logger.info(f"Fixed event {event.summary} to Free")
 
                 except Exception:
