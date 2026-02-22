@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+import discord
+
 from flumphbot.bot.polls import VacationConfirmationView
 from flumphbot.calendar.event_analyzer import EventCategory
 from flumphbot.calendar.models import EventStatus
@@ -63,6 +65,17 @@ class ScheduledTasks:
             # Get away events to display in poll context
             away_events = self.bot.event_analyzer.find_away_events(events)
 
+            # Load tag_everyone setting
+            tag_everyone_setting = await self.bot.storage.get_setting("tag_everyone")
+            tag_everyone = tag_everyone_setting == "true"
+
+            # Load poll duration from settings or config
+            duration_setting = await self.bot.storage.get_setting("poll_duration_days")
+            if duration_setting:
+                duration_hours = int(duration_setting) * 24
+            else:
+                duration_hours = self.bot.config.scheduler.poll_duration_hours
+
             # Get the notification channel
             channel = self.bot.get_channel(self.bot.config.discord.channel_id)
             if not channel:
@@ -70,13 +83,13 @@ class ScheduledTasks:
                 return
 
             # Create the poll
-            import discord
             if isinstance(channel, discord.TextChannel):
                 await self.bot.poll_manager.create_scheduling_poll(
                     channel,
                     available,
-                    duration_hours=self.bot.config.scheduler.poll_duration_hours,
+                    duration_hours=duration_hours,
                     away_events=away_events,
+                    tag_everyone=tag_everyone,
                 )
                 logger.info("Weekly poll created successfully")
 
@@ -293,3 +306,158 @@ class ScheduledTasks:
             await user.send(message, view=view)
         except Exception:
             logger.exception(f"Error sending vacation confirmation to {discord_id}")
+
+    async def send_session_reminders(self) -> None:
+        """Send DM reminders before scheduled D&D sessions.
+
+        This task runs hourly to check for upcoming sessions and send
+        reminder DMs to all registered users.
+        """
+        logger.info("Checking for session reminders")
+
+        try:
+            # Load reminder hours setting
+            reminder_hours = await self.bot.storage.get_setting("reminder_hours")
+            if not reminder_hours or int(reminder_hours) == 0:
+                logger.debug("Session reminders disabled")
+                return
+
+            hours = int(reminder_hours)
+
+            # Get events for the reminder window
+            now = datetime.utcnow()
+            window_start = now + timedelta(hours=hours - 0.5)  # -30 min tolerance
+            window_end = now + timedelta(hours=hours + 0.5)    # +30 min tolerance
+
+            events = self.bot.calendar_client.get_events(
+                start_date=window_start,
+                end_date=window_end,
+            )
+
+            # Find D&D sessions in the window
+            dnd_sessions = [
+                e for e in events
+                if self.bot.event_analyzer.is_dnd_session(e)
+            ]
+
+            if not dnd_sessions:
+                logger.debug("No sessions in reminder window")
+                return
+
+            # Get all user mappings
+            mappings = await self.bot.storage.get_all_user_mappings()
+            if not mappings:
+                logger.debug("No user mappings for reminders")
+                return
+
+            # Send reminders for each session
+            for session in dnd_sessions:
+                # Check if we already sent reminder for this session
+                reminder_key = f"reminder_sent_{session.id}"
+                already_sent = await self.bot.storage.get_setting(reminder_key)
+                if already_sent:
+                    continue
+
+                # Format session time
+                session_time = session.start.strftime("%A, %B %d at %I:%M %p")
+
+                for mapping in mappings:
+                    try:
+                        message = (
+                            f"**Reminder:** D&D session starts in {hours} hours!\n"
+                            f"{session_time}"
+                        )
+                        await self.bot.send_dm(mapping.discord_id, message)
+                    except Exception:
+                        logger.exception(
+                            f"Error sending reminder to {mapping.discord_id}"
+                        )
+
+                # Mark reminder as sent
+                await self.bot.storage.set_setting(reminder_key, "true")
+                logger.info(f"Sent reminders for session: {session.summary}")
+
+        except Exception:
+            logger.exception("Error in session reminders task")
+
+    async def check_poll_warning(self) -> None:
+        """Check if active poll needs a low-vote warning.
+
+        This task runs hourly to check if an active poll is about to close
+        with too few votes.
+        """
+        logger.info("Checking for poll warning")
+
+        try:
+            # Load warning settings
+            pollwarn_hours = await self.bot.storage.get_setting("pollwarn_hours")
+            if not pollwarn_hours or int(pollwarn_hours) == 0:
+                logger.debug("Poll warnings disabled")
+                return
+
+            hours = int(pollwarn_hours)
+            min_votes_setting = await self.bot.storage.get_setting("pollwarn_min_votes")
+            min_votes = int(min_votes_setting or "3")
+
+            # Check for active poll
+            active_poll = await self.bot.poll_manager.get_active_poll()
+            if not active_poll:
+                logger.debug("No active poll")
+                return
+
+            # Check if we're in the warning window
+            now = datetime.utcnow()
+            warning_threshold = active_poll.closes_at - timedelta(hours=hours)
+
+            if now < warning_threshold:
+                logger.debug("Not yet in warning window")
+                return
+
+            # Check if we already sent warning for this poll
+            warning_key = f"pollwarn_sent_{active_poll.id}"
+            already_sent = await self.bot.storage.get_setting(warning_key)
+            if already_sent:
+                logger.debug("Warning already sent for this poll")
+                return
+
+            # Get the poll message to check votes
+            channel = self.bot.get_channel(active_poll.channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                logger.error("Could not find poll channel")
+                return
+
+            try:
+                message = await channel.fetch_message(active_poll.message_id)
+            except discord.NotFound:
+                logger.error(f"Poll message {active_poll.message_id} not found")
+                return
+
+            if not message.poll:
+                logger.error("Message has no poll")
+                return
+
+            # Count total votes
+            total_votes = sum(answer.vote_count for answer in message.poll.answers)
+
+            if total_votes >= min_votes:
+                logger.debug(f"Poll has {total_votes} votes, no warning needed")
+                return
+
+            # Calculate time until close
+            time_left = active_poll.closes_at - now
+            hours_left = int(time_left.total_seconds() / 3600)
+
+            # Send warning
+            warning_message = (
+                f"**Poll closes in {hours_left} hours** and only has "
+                f"**{total_votes} vote{'s' if total_votes != 1 else ''}**! "
+                f"Don't forget to vote!"
+            )
+            await channel.send(warning_message)
+
+            # Mark warning as sent
+            await self.bot.storage.set_setting(warning_key, "true")
+            logger.info(f"Sent poll warning: {total_votes} votes")
+
+        except Exception:
+            logger.exception("Error in poll warning task")

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Literal
 import discord
 from discord import app_commands
 
+from flumphbot.bot.views import SettingsView, StatusView
+
 if TYPE_CHECKING:
     from flumphbot.bot.client import FlumphBot
 
@@ -14,6 +16,23 @@ logger = logging.getLogger(__name__)
 
 # Valid keyword categories
 KeywordCategory = Literal["dnd", "away", "personal"]
+
+# Day choices for schedule command
+DAY_CHOICES = [
+    app_commands.Choice(name="Monday", value="Monday"),
+    app_commands.Choice(name="Tuesday", value="Tuesday"),
+    app_commands.Choice(name="Wednesday", value="Wednesday"),
+    app_commands.Choice(name="Thursday", value="Thursday"),
+    app_commands.Choice(name="Friday", value="Friday"),
+    app_commands.Choice(name="Saturday", value="Saturday"),
+    app_commands.Choice(name="Sunday", value="Sunday"),
+]
+
+# On/Off choices
+ON_OFF_CHOICES = [
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+]
 
 
 class FlumphCommands(app_commands.Group):
@@ -38,26 +57,54 @@ class FlumphCommands(app_commands.Group):
         )
 
         embed.add_field(
-            name="/dnd schedule",
-            value="Manually trigger a scheduling poll for D&D sessions. "
-            "Checks calendar availability and creates a poll with available dates.",
+            name="/dnd pollnow <start_day> <days_ahead>",
+            value="Create a scheduling poll. start_day: days from today (0-14). "
+            "days_ahead: number of days to include (1-14).",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd showsettings",
+            value="View current bot settings (schedule, notifications, etc.).",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd allsettings",
+            value="Interactive settings panel with buttons to edit all settings.",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd schedule <day> <hour> <duration> <timezone>",
+            value="Configure weekly auto-poll schedule.",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd everyone <on|off>",
+            value="Toggle @everyone tagging in poll posts.",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd reminder <hours>",
+            value="Configure session reminder DMs (0 = disabled).",
+            inline=False,
+        )
+        embed.add_field(
+            name="/dnd pollwarn <hours> <min_votes>",
+            value="Configure poll close warnings (0 hours = disabled).",
             inline=False,
         )
         embed.add_field(
             name="/dnd status",
-            value="Show upcoming D&D sessions and player absences. "
-            "Displays the next 4 weeks of scheduled events.",
+            value="Show upcoming sessions and vacations with quick actions.",
             inline=False,
         )
         embed.add_field(
             name="/dnd sync",
-            value="Force calendar sync and fix any Busy/Free issues. "
-            "Shows events that were corrected and potential personal events.",
+            value="Force calendar sync and fix Busy/Free issues.",
             inline=False,
         )
         embed.add_field(
             name="/dnd config",
-            value="View current bot configuration settings. (Admin only)",
+            value="View environment-based configuration. (Admin only)",
             inline=False,
         )
         embed.add_field(
@@ -73,10 +120,19 @@ class FlumphCommands(app_commands.Group):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="schedule", description="Manually trigger a scheduling poll")
+    @app_commands.command(name="pollnow", description="Create a scheduling poll with custom date range")
+    @app_commands.describe(
+        start_day="Days from today to start polling (0=today, 1=tomorrow, max 14)",
+        days_ahead="Number of days to include in poll (1-14)",
+    )
     @app_commands.checks.has_permissions(manage_messages=True)
-    async def schedule(self, interaction: discord.Interaction) -> None:
-        """Manually trigger a scheduling poll."""
+    async def pollnow(
+        self,
+        interaction: discord.Interaction,
+        start_day: app_commands.Range[int, 0, 14],
+        days_ahead: app_commands.Range[int, 1, 14],
+    ) -> None:
+        """Create a scheduling poll with configurable date range."""
         await interaction.response.defer()
 
         try:
@@ -88,23 +144,40 @@ class FlumphCommands(app_commands.Group):
                 )
                 return
 
-            # Get available dates
-            events = self.bot.calendar_client.get_events()
+            # Calculate date range
+            start_date = datetime.utcnow() + timedelta(days=start_day)
+            end_date = start_date + timedelta(days=days_ahead)
+
+            # Get events
+            events = self.bot.calendar_client.get_events(
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            # Find available dates
             available = self.bot.event_analyzer.find_available_dates(
                 events,
-                start_date=datetime.utcnow(),
-                days_ahead=14,
+                start_date=start_date,
+                days_ahead=days_ahead,
             )
 
             if not available:
                 await interaction.followup.send(
-                    "No available dates found in the next 2 weeks. "
-                    "Everyone seems to be busy!"
+                    f"No available dates found from {start_date.strftime('%B %d')} "
+                    f"to {end_date.strftime('%B %d')}. Everyone seems to be busy!"
                 )
                 return
 
             # Get away events to display in poll context
             away_events = self.bot.event_analyzer.find_away_events(events)
+
+            # Check tag_everyone setting
+            tag_everyone_setting = await self.bot.storage.get_setting("tag_everyone")
+            tag_everyone = tag_everyone_setting == "true"
+
+            # Get poll duration from settings
+            duration_setting = await self.bot.storage.get_setting("poll_duration_days")
+            duration_hours = int(duration_setting or "2") * 24
 
             # Create poll
             channel = interaction.channel
@@ -112,8 +185,9 @@ class FlumphCommands(app_commands.Group):
                 await self.bot.poll_manager.create_scheduling_poll(
                     channel,
                     available,
-                    duration_hours=self.bot.config.scheduler.poll_duration_hours,
+                    duration_hours=duration_hours,
                     away_events=away_events,
+                    tag_everyone=tag_everyone,
                 )
                 await interaction.followup.send("Scheduling poll created!")
             else:
@@ -123,6 +197,209 @@ class FlumphCommands(app_commands.Group):
         except Exception as e:
             logger.exception("Error creating schedule poll")
             await interaction.followup.send(f"Error creating poll: {e}")
+
+    @app_commands.command(name="showsettings", description="View current bot settings")
+    async def showsettings(self, interaction: discord.Interaction) -> None:
+        """Display all current settings."""
+        config = self.bot.config.scheduler
+
+        # Load settings from storage with config fallback
+        schedule_day = await self.bot.storage.get_setting("schedule_day") or config.poll_day
+        schedule_hour = await self.bot.storage.get_setting("schedule_hour") or config.poll_time.split(":")[0]
+        schedule_timezone = await self.bot.storage.get_setting("schedule_timezone") or config.timezone
+        poll_duration = await self.bot.storage.get_setting("poll_duration_days") or str(config.poll_duration_hours // 24)
+        tag_everyone = await self.bot.storage.get_setting("tag_everyone") or "false"
+        reminder_hours = await self.bot.storage.get_setting("reminder_hours") or "0"
+        pollwarn_hours = await self.bot.storage.get_setting("pollwarn_hours") or "0"
+        pollwarn_min_votes = await self.bot.storage.get_setting("pollwarn_min_votes") or "3"
+
+        # Build embed
+        embed = discord.Embed(
+            title="FlumphBot Settings",
+            color=discord.Color.blue(),
+        )
+
+        # Schedule section
+        schedule_info = (
+            f"Day: **{schedule_day}**\n"
+            f"Time: **{schedule_hour}:00**\n"
+            f"Timezone: **{schedule_timezone}**\n"
+            f"Poll Duration: **{poll_duration} days**"
+        )
+        embed.add_field(
+            name="Weekly Poll Schedule",
+            value=schedule_info,
+            inline=False,
+        )
+
+        # Notifications section
+        everyone_status = "ON" if tag_everyone == "true" else "OFF"
+        reminder_status = f"{reminder_hours} hours before" if int(reminder_hours) > 0 else "Disabled"
+        pollwarn_status = (
+            f"{pollwarn_hours} hours before (min {pollwarn_min_votes} votes)"
+            if int(pollwarn_hours) > 0 else "Disabled"
+        )
+
+        notifications_info = (
+            f"@everyone: **{everyone_status}**\n"
+            f"Session Reminder: **{reminder_status}**\n"
+            f"Poll Warning: **{pollwarn_status}**"
+        )
+        embed.add_field(
+            name="Notifications",
+            value=notifications_info,
+            inline=False,
+        )
+
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="allsettings", description="Interactive settings panel")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def allsettings(self, interaction: discord.Interaction) -> None:
+        """Show interactive settings panel with buttons."""
+        config = self.bot.config.scheduler
+
+        # Load settings
+        schedule_day = await self.bot.storage.get_setting("schedule_day") or config.poll_day
+        schedule_hour = await self.bot.storage.get_setting("schedule_hour") or config.poll_time.split(":")[0]
+        schedule_timezone = await self.bot.storage.get_setting("schedule_timezone") or config.timezone
+        poll_duration = await self.bot.storage.get_setting("poll_duration_days") or str(config.poll_duration_hours // 24)
+        tag_everyone = await self.bot.storage.get_setting("tag_everyone") or "false"
+        reminder_hours = await self.bot.storage.get_setting("reminder_hours") or "0"
+        pollwarn_hours = await self.bot.storage.get_setting("pollwarn_hours") or "0"
+        pollwarn_min_votes = await self.bot.storage.get_setting("pollwarn_min_votes") or "3"
+
+        # Build embed
+        embed = discord.Embed(
+            title="FlumphBot Settings",
+            description="Use the buttons below to edit settings.",
+            color=discord.Color.blue(),
+        )
+
+        # Schedule section
+        embed.add_field(
+            name="Weekly Poll Schedule",
+            value=f"Day: {schedule_day} | Hour: {schedule_hour}:00 | Timezone: {schedule_timezone}\n"
+                  f"Poll Duration: {poll_duration} days",
+            inline=False,
+        )
+
+        # Notifications section
+        everyone_status = "ON" if tag_everyone == "true" else "OFF"
+        reminder_text = f"{reminder_hours}h before" if int(reminder_hours) > 0 else "Off"
+        pollwarn_text = f"{pollwarn_hours}h before (min {pollwarn_min_votes})" if int(pollwarn_hours) > 0 else "Off"
+
+        embed.add_field(
+            name="Notifications",
+            value=f"@everyone: {everyone_status} | Session Reminder: {reminder_text}\n"
+                  f"Poll Warning: {pollwarn_text}",
+            inline=False,
+        )
+
+        view = SettingsView(self.bot)
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="schedule", description="Configure weekly auto-poll schedule")
+    @app_commands.describe(
+        day="Day of week for the weekly poll",
+        hour="Hour in 24h format (0-23)",
+        duration="Days the poll stays active (1-7)",
+        timezone="Timezone (e.g., America/New_York)",
+    )
+    @app_commands.choices(day=DAY_CHOICES)
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def schedule(
+        self,
+        interaction: discord.Interaction,
+        day: app_commands.Choice[str],
+        hour: app_commands.Range[int, 0, 23],
+        duration: app_commands.Range[int, 1, 7],
+        timezone: str,
+    ) -> None:
+        """Configure the weekly auto-poll schedule."""
+        await interaction.response.defer()
+
+        try:
+            # Save settings
+            await self.bot.storage.set_setting("schedule_day", day.value)
+            await self.bot.storage.set_setting("schedule_hour", str(hour))
+            await self.bot.storage.set_setting("poll_duration_days", str(duration))
+            await self.bot.storage.set_setting("schedule_timezone", timezone)
+
+            # Reload scheduler
+            await self.bot.reload_scheduler()
+
+            await interaction.followup.send(
+                f"Schedule updated: **{day.value}** at **{hour:02d}:00 {timezone}**, "
+                f"poll duration **{duration} days**. Changes applied immediately."
+            )
+        except Exception as e:
+            logger.exception("Error updating schedule")
+            await interaction.followup.send(f"Error updating schedule: {e}")
+
+    @app_commands.command(name="everyone", description="Toggle @everyone tagging in poll posts")
+    @app_commands.describe(enabled="Enable or disable @everyone tagging")
+    @app_commands.choices(enabled=ON_OFF_CHOICES)
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def everyone(
+        self,
+        interaction: discord.Interaction,
+        enabled: app_commands.Choice[str],
+    ) -> None:
+        """Toggle @everyone tagging for polls."""
+        value = "true" if enabled.value == "on" else "false"
+        await self.bot.storage.set_setting("tag_everyone", value)
+
+        status = "enabled" if value == "true" else "disabled"
+        await interaction.response.send_message(f"@everyone tagging is now **{status}**.")
+
+    @app_commands.command(name="reminder", description="Configure session reminder DMs")
+    @app_commands.describe(hours="Hours before session to send reminder (0 = disabled)")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def reminder(
+        self,
+        interaction: discord.Interaction,
+        hours: app_commands.Range[int, 0, 48],
+    ) -> None:
+        """Configure session reminder DMs."""
+        await self.bot.storage.set_setting("reminder_hours", str(hours))
+
+        # Reload scheduler to update jobs
+        await self.bot.reload_scheduler()
+
+        if hours == 0:
+            await interaction.response.send_message("Session reminders are now **disabled**.")
+        else:
+            await interaction.response.send_message(
+                f"Session reminders will be sent **{hours} hours** before each session."
+            )
+
+    @app_commands.command(name="pollwarn", description="Configure poll close warnings")
+    @app_commands.describe(
+        hours="Hours before poll closes to warn (0 = disabled)",
+        min_votes="Minimum votes to consider 'enough' (warning only triggers if below this)",
+    )
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def pollwarn(
+        self,
+        interaction: discord.Interaction,
+        hours: app_commands.Range[int, 0, 24],
+        min_votes: app_commands.Range[int, 1, 10],
+    ) -> None:
+        """Configure poll close warnings."""
+        await self.bot.storage.set_setting("pollwarn_hours", str(hours))
+        await self.bot.storage.set_setting("pollwarn_min_votes", str(min_votes))
+
+        # Reload scheduler to update jobs
+        await self.bot.reload_scheduler()
+
+        if hours == 0:
+            await interaction.response.send_message("Poll close warnings are now **disabled**.")
+        else:
+            await interaction.response.send_message(
+                f"Poll warning will be sent **{hours} hours** before close "
+                f"if there are fewer than **{min_votes} votes**."
+            )
 
     @app_commands.command(name="status", description="Show upcoming sessions and vacations")
     async def status(self, interaction: discord.Interaction) -> None:
@@ -187,7 +464,9 @@ class FlumphCommands(app_commands.Group):
                     inline=False,
                 )
 
-            await interaction.followup.send(embed=embed)
+            # Add view with Create Poll Now button
+            view = StatusView(self.bot)
+            await interaction.followup.send(embed=embed, view=view)
         except Exception as e:
             logger.exception("Error getting status")
             await interaction.followup.send(f"Error getting status: {e}")

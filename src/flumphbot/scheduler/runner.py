@@ -41,13 +41,37 @@ class SchedulerRunner:
         self._setup_jobs()
 
     def _setup_jobs(self) -> None:
-        """Set up all scheduled jobs."""
+        """Set up all scheduled jobs using config defaults.
+
+        Note: This is called synchronously during init. For dynamic settings
+        from storage, call reload_schedule() after bot is ready.
+        """
         config = self.bot.config.scheduler
 
-        # Parse poll time
+        # Parse poll time from config defaults
         hour, minute = map(int, config.poll_time.split(":"))
         day_of_week = DAY_MAP.get(config.poll_day.lower(), "mon")
+        timezone = config.timezone
 
+        self._add_core_jobs(day_of_week, hour, minute, timezone, config)
+
+    def _add_core_jobs(
+        self,
+        day_of_week: str,
+        hour: int,
+        minute: int,
+        timezone: str,
+        config,
+    ) -> None:
+        """Add all core scheduled jobs.
+
+        Args:
+            day_of_week: Cron day of week value.
+            hour: Hour for weekly jobs.
+            minute: Minute for weekly jobs.
+            timezone: Timezone string.
+            config: Scheduler config for other settings.
+        """
         # Weekly poll job
         self.scheduler.add_job(
             self.tasks.post_weekly_poll,
@@ -55,14 +79,14 @@ class SchedulerRunner:
                 day_of_week=day_of_week,
                 hour=hour,
                 minute=minute,
-                timezone=config.timezone,
+                timezone=timezone,
             ),
             id="weekly_poll",
             name="Post weekly scheduling poll",
             replace_existing=True,
         )
         logger.info(
-            f"Scheduled weekly poll for {config.poll_day} at {config.poll_time}"
+            f"Scheduled weekly poll for {day_of_week} at {hour:02d}:{minute:02d} {timezone}"
         )
 
         # Calendar hygiene sync (every N minutes)
@@ -95,15 +119,63 @@ class SchedulerRunner:
                 day_of_week=day_of_week,
                 hour=confirm_hour,
                 minute=minute,
-                timezone=config.timezone,
+                timezone=timezone,
             ),
             id="vacation_confirmation",
             name="Vacation confirmation requests",
             replace_existing=True,
         )
         logger.info(
-            f"Scheduled vacation confirmation for {config.poll_day} at {confirm_hour}:{minute:02d}"
+            f"Scheduled vacation confirmation for {day_of_week} at {confirm_hour}:{minute:02d}"
         )
+
+        # Session reminders (hourly check)
+        self.scheduler.add_job(
+            self.tasks.send_session_reminders,
+            IntervalTrigger(minutes=30),
+            id="session_reminders",
+            name="Session reminder check",
+            replace_existing=True,
+        )
+        logger.info("Scheduled session reminder check every 30 minutes")
+
+        # Poll warning (hourly check)
+        self.scheduler.add_job(
+            self.tasks.check_poll_warning,
+            IntervalTrigger(minutes=30),
+            id="poll_warning",
+            name="Poll warning check",
+            replace_existing=True,
+        )
+        logger.info("Scheduled poll warning check every 30 minutes")
+
+    async def reload_schedule(self) -> None:
+        """Reload schedule settings from storage.
+
+        This method loads settings from storage (with config fallback)
+        and reschedules all jobs accordingly. Call this after settings
+        are changed via commands.
+        """
+        config = self.bot.config.scheduler
+
+        # Load settings from storage with config fallback
+        schedule_day = await self.bot.storage.get_setting("schedule_day")
+        schedule_hour = await self.bot.storage.get_setting("schedule_hour")
+        schedule_timezone = await self.bot.storage.get_setting("schedule_timezone")
+
+        # Use storage values or fall back to config
+        day = schedule_day or config.poll_day
+        hour_str = schedule_hour or config.poll_time.split(":")[0]
+        timezone = schedule_timezone or config.timezone
+
+        hour = int(hour_str)
+        minute = 0  # We only support hour-level scheduling
+        day_of_week = DAY_MAP.get(day.lower(), "mon")
+
+        logger.info(f"Reloading schedule: {day} at {hour:02d}:00 {timezone}")
+
+        # Re-add all jobs with new settings
+        self._add_core_jobs(day_of_week, hour, minute, timezone, config)
 
     def start(self) -> None:
         """Start the scheduler."""

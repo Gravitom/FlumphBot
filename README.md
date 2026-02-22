@@ -8,7 +8,11 @@ A Discord bot that automates D&D session scheduling by integrating with Google C
 - **Calendar Hygiene**: Auto-fixes events incorrectly marked as "Busy"
 - **Personal Event Detection**: Alerts users when personal events are added to the D&D calendar
 - **Vacation Confirmation**: Weekly reminders to confirm vacation dates
-- **Slash Commands**: Manual control via Discord commands
+- **Session Reminders**: DM players before scheduled sessions
+- **Poll Warnings**: Remind channel if poll has low votes before closing
+- **Interactive Settings**: Configure all settings via Discord UI (buttons, modals, dropdowns)
+- **@everyone Toggle**: Optional tagging for poll posts
+- **Slash Commands**: Full control via Discord commands
 
 ## Quick Start
 
@@ -72,13 +76,42 @@ pip install -e .
 
 ## Slash Commands
 
+### Core Commands
+
 | Command | Description |
 |---------|-------------|
-| `/dnd schedule` | Manually trigger a scheduling poll |
-| `/dnd status` | Show upcoming sessions and vacations |
+| `/dnd pollnow <start_day> <days_ahead>` | Create a scheduling poll with custom date range |
+| `/dnd status` | Show upcoming sessions/vacations with quick actions |
 | `/dnd sync` | Force calendar sync and show issues |
-| `/dnd config` | View bot configuration |
+| `/dnd config` | View environment-based configuration |
 | `/vacation add` | Add vacation dates to the calendar |
+| `/keywords` | Manage detection keywords (list/add/remove) |
+
+### Settings Commands
+
+| Command | Description |
+|---------|-------------|
+| `/dnd showsettings` | View current bot settings |
+| `/dnd allsettings` | Interactive settings panel with buttons |
+| `/dnd schedule <day> <hour> <duration> <timezone>` | Configure weekly auto-poll schedule |
+| `/dnd everyone <on\|off>` | Toggle @everyone tagging in poll posts |
+| `/dnd reminder <hours>` | Configure session reminder DMs (0 = disabled) |
+| `/dnd pollwarn <hours> <min_votes>` | Configure poll close warnings (0 = disabled) |
+
+### Settings Storage
+
+Settings configured via commands persist in the database and override environment defaults:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `schedule_day` | Monday | Day of week for auto-poll |
+| `schedule_hour` | 9 | Hour (0-23) for auto-poll |
+| `schedule_timezone` | America/New_York | Timezone for scheduling |
+| `poll_duration_days` | 2 | Days poll stays active |
+| `tag_everyone` | false | Tag @everyone in poll posts |
+| `reminder_hours` | 0 | Hours before session to DM reminder |
+| `pollwarn_hours` | 0 | Hours before close to warn |
+| `pollwarn_min_votes` | 3 | Min votes before warning triggers |
 
 ## Deployment
 
@@ -99,12 +132,14 @@ See [deploy/azure/README.md](deploy/azure/README.md) for Terraform deployment in
 
 ### Weekly Poll Flow
 
-1. **Monday 8 AM**: Bot sends vacation confirmation DMs
-2. **Monday 9 AM**: Bot fetches calendar events for the next 2 weeks
+1. **1 hour before poll**: Bot sends vacation confirmation DMs
+2. **Poll time** (configurable): Bot fetches calendar events for the next 2 weeks
 3. Bot identifies dates where everyone is available
-4. Poll posted in configured channel with available dates
-5. After 48 hours (or when all vote), poll closes
-6. Winning date gets a D&D session event (marked as **Busy**)
+4. Poll posted in configured channel (optionally with @everyone)
+5. **Poll warning**: If enabled, warns when votes are low before closing
+6. After configured duration, poll closes
+7. Winning date gets a D&D session event (marked as **Busy**)
+8. **Session reminder**: If enabled, DMs players before the session
 
 ### Calendar Hygiene Rules
 
@@ -139,9 +174,15 @@ mypy src/flumphbot
 ```
 FlumphBot/
 ├── src/flumphbot/
-│   ├── bot/           # Discord bot client and commands
+│   ├── bot/           # Discord bot client, commands, and UI views
+│   │   ├── client.py  # Main bot client
+│   │   ├── commands.py # Slash command definitions
+│   │   ├── polls.py   # Poll creation and management
+│   │   └── views.py   # Discord UI components (modals, buttons, selects)
 │   ├── calendar/      # Google Calendar integration
 │   ├── scheduler/     # Scheduled tasks (APScheduler)
+│   │   ├── runner.py  # Job scheduler with dynamic reload
+│   │   └── tasks.py   # Task definitions (polls, reminders, warnings)
 │   └── storage/       # Storage backends (SQLite, Azure Tables)
 ├── tests/             # Unit tests
 ├── deploy/

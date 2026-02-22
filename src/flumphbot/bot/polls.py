@@ -32,6 +32,7 @@ class PollManager:
         available_slots: list[AvailabilitySlot],
         duration_hours: int = 48,
         away_events: list[CalendarEvent] | None = None,
+        tag_everyone: bool = False,
     ) -> discord.Message | None:
         """Create a scheduling poll in the given channel.
 
@@ -40,6 +41,7 @@ class PollManager:
             available_slots: List of available date/time slots.
             duration_hours: How long the poll should run.
             away_events: Optional list of away/vacation events to display.
+            tag_everyone: Whether to tag @everyone in the poll message.
 
         Returns:
             The posted message, or None if no slots available.
@@ -52,7 +54,12 @@ class PollManager:
         slots_to_use = available_slots[:MAX_POLL_OPTIONS]
 
         # Build context message with away events if any
-        context_message = None
+        context_parts = []
+
+        # Add @everyone tag if enabled
+        if tag_everyone:
+            context_parts.append("@everyone")
+
         if away_events:
             absence_lines = []
             for event in away_events:
@@ -70,7 +77,7 @@ class PollManager:
                 absence_lines.append(f"• **{event.summary}** - {date_str} ({creator})")
 
             if absence_lines:
-                context_message = "📅 **Upcoming Absences:**\n" + "\n".join(absence_lines[:5])
+                context_parts.append("📅 **Upcoming Absences:**\n" + "\n".join(absence_lines[:5]))
 
         # Create the poll
         poll = discord.Poll(
@@ -87,7 +94,8 @@ class PollManager:
             poll.add_answer(text=label[:55])  # Discord limit
 
         # Send context message first, then poll
-        if context_message:
+        if context_parts:
+            context_message = "\n\n".join(context_parts)
             await channel.send(context_message)
 
         # Send the poll

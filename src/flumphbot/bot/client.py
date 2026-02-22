@@ -87,6 +87,44 @@ class FlumphBot(commands.Bot):
             personal_keywords=personal_keywords,
         )
 
+    async def reload_scheduler(self) -> None:
+        """Reload scheduler with current settings from storage.
+
+        Call this after changing schedule-related settings to apply
+        them immediately without restarting the bot.
+        """
+        if self._scheduler:
+            await self._scheduler.reload_schedule()
+            logger.info("Scheduler reloaded with new settings")
+
+    async def get_schedule_settings(self) -> dict:
+        """Get current schedule settings from storage with config fallback.
+
+        Returns:
+            Dictionary with schedule settings.
+        """
+        config = self.config.scheduler
+
+        schedule_day = await self.storage.get_setting("schedule_day") or config.poll_day
+        schedule_hour = await self.storage.get_setting("schedule_hour") or config.poll_time.split(":")[0]
+        schedule_timezone = await self.storage.get_setting("schedule_timezone") or config.timezone
+        poll_duration = await self.storage.get_setting("poll_duration_days") or str(config.poll_duration_hours // 24)
+        tag_everyone = await self.storage.get_setting("tag_everyone") or "false"
+        reminder_hours = await self.storage.get_setting("reminder_hours") or "0"
+        pollwarn_hours = await self.storage.get_setting("pollwarn_hours") or "0"
+        pollwarn_min_votes = await self.storage.get_setting("pollwarn_min_votes") or "3"
+
+        return {
+            "schedule_day": schedule_day,
+            "schedule_hour": schedule_hour,
+            "schedule_timezone": schedule_timezone,
+            "poll_duration_days": poll_duration,
+            "tag_everyone": tag_everyone == "true",
+            "reminder_hours": int(reminder_hours),
+            "pollwarn_hours": int(pollwarn_hours),
+            "pollwarn_min_votes": int(pollwarn_min_votes),
+        }
+
     @property
     def poll_manager(self) -> PollManager:
         """Get the poll manager."""
